@@ -4,7 +4,9 @@ import (
 	"bytes"
 	"fmt"
 	"net/http"
+	"regexp"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/yhat/scrape"
@@ -12,15 +14,78 @@ import (
 	"golang.org/x/net/html/atom"
 )
 
-func main() {
-	if err := (&Group{"shanghaizufang", 50}).ForEach(debug); err != nil {
-		fmt.Printf("main: %v\n", err)
-	}
+type Group struct {
+	Name     string
+	Capacity int
 }
 
-func debug(p Post) error {
-	fmt.Println(p)
+func (g *Group) EachPost(handle func(base *Post) error) error {
+	page := g.Capacity / 25
+	for n := 0; n < page; n++ {
+		url := fmt.Sprintf("https://www.douban.com/group/%s/discussion?start=%d",
+			g.Name, n*25+1)
+		if err := eachPage(url, handle); err != nil {
+			return fmt.Errorf("posts in %s: %v", url, err)
+		}
+	}
 	return nil
+}
+
+func eachPage(url string, handle func(base *Post) error) error {
+	root, err := doubanGet(url)
+	if err != nil {
+		return fmt.Errorf("get douban: %v", err)
+	}
+	matches := scrape.FindAll(root, postLinkMatcher)
+	if len(matches) == 0 {
+		return NoneElementErr("/?postLinkMatcher", root)
+	}
+	for _, linkNode := range matches {
+		var base Post
+		if err := base.getBasic(linkNode); err != nil {
+			return fmt.Errorf("get post basic: %v", err)
+		} else {
+			if err := handle(&base); err != nil {
+				return fmt.Errorf("handle %#v: %v", base, err)
+			}
+		}
+	}
+	return nil
+}
+
+func doubanGet(url string) (*html.Node, error) {
+	resp, err := http.Get(url)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != 200 {
+		return nil, fmt.Errorf("http status code: %s", resp.Status)
+	}
+	root, err := html.Parse(resp.Body)
+	if err != nil {
+		return nil, err
+	}
+	if titleNode, ok := scrape.Find(root, scrape.ByTag(atom.Title)); ok &&
+		scrape.Text(titleNode) == "豆瓣" {
+		return nil, fmt.Errorf("response html title is '豆瓣', need to login")
+	}
+	return root, nil
+}
+
+func postLinkMatcher(n *html.Node) bool {
+	if n.DataAtom == atom.A && n.Parent != nil && n.Parent.DataAtom == atom.Td &&
+		scrape.Attr(n.Parent, "class") == "title" {
+		return true
+	}
+	return false
+}
+
+func NoneElementErr(desc string, n *html.Node) error {
+	var buf bytes.Buffer
+	html.Render(&buf, n)
+	return fmt.Errorf("select no '%s' =>\n%s\n",
+		desc, strings.Repeat("*", 80), buf.String())
 }
 
 type Post struct {
@@ -31,117 +96,81 @@ type Post struct {
 	LastReply time.Time
 	Created   time.Time
 	Content   string
+	Favor     int
 }
 
-type Group struct {
-	Name     string
-	Capacity int
+func (p *Post) String() string {
+	const format string = "01-02"
+	created := strings.Repeat(" ", len(format))
+	link := strings.TrimRight(p.Link, "/")
+	link = link[strings.LastIndex(link, "/"):]
+	if !p.Created.IsZero() {
+		created = p.Created.Format(format)
+	}
+	return fmt.Sprintf("%s >> %s: %s(%s)", created, p.LastReply.Format(format),
+		strings.Replace(p.Title, "\n", "", -1), link)
 }
 
-func (g *Group) ForEach(handle func(p Post) error) error {
-	page := g.Capacity / 25
-	for n := 0; n < page; n++ {
-		url := fmt.Sprintf("https://www.douban.com/group/%s/discussion?start=%d", g.Name, n*25+1)
-		if err := g.eachPage(url, handle); err != nil {
-			return fmt.Errorf("posts in %s: %v", url, err)
-		}
-	}
-	return nil
-}
-
-func (g *Group) eachPage(url string, handle func(p Post) error) error {
-	resp, err := http.Get(url)
-	if err != nil {
-		return err
-	}
-	defer resp.Body.Close()
-	root, err := html.Parse(resp.Body)
-	if err != nil {
-		return err
-	}
-	matches := scrape.FindAll(root, postMatcher)
-	if len(matches) == 0 {
-		return fmt.Errorf("match zero post =>\n%s", node2String(root))
-	}
-	for _, linkNode := range matches {
-		if post, err := fromMatcher(linkNode); err != nil {
-			return fmt.Errorf("matches2post: %v", err)
-		} else {
-			if err := handle(post); err != nil {
-				return fmt.Errorf("handle %v: %v", post, err)
-			}
-		}
-	}
-	return nil
-}
-
-func postMatcher(n *html.Node) bool {
-	if n.DataAtom == atom.A && n.Parent != nil && n.Parent.DataAtom == atom.Td &&
-		scrape.Attr(n.Parent, "class") == "title" {
-		return true
-	}
-	return false
-}
-
-func fromMatcher(linkNode *html.Node) (Post, error) {
-	link := scrape.Attr(linkNode, "href")
+func (p *Post) getBasic(linkNode *html.Node) error {
+	p.Link = scrape.Attr(linkNode, "href")
+	p.Title = scrape.Text(linkNode)
 	authorNode := linkNode.Parent.NextSibling.NextSibling
+	p.Author = scrape.Text(authorNode)
 	replyNode := authorNode.NextSibling.NextSibling
 	replyStr := scrape.Text(replyNode)
 	if replyStr == "" {
 		replyStr = "0"
 	}
-	reply, err := strconv.Atoi(replyStr)
-	if err != nil {
-		return Post{}, fmt.Errorf("convert reply num: %v", err)
+	if reply, err := strconv.Atoi(replyStr); err != nil {
+		return fmt.Errorf("convert reply-num: %v", err)
+	} else {
+		p.Reply = reply
 	}
 	lastReplyNode := replyNode.NextSibling.NextSibling
-	lastReply, err := time.Parse("2006-01-02 15:04 MST", "2017-"+scrape.Text(lastReplyNode)+" CST")
-	if err != nil {
-		return Post{}, fmt.Errorf("convert last reply time: %v", err)
+	if lastReply, err := time.Parse("2006-01-02 15:04 MST",
+		"2017-"+scrape.Text(lastReplyNode)+" CST"); err != nil {
+		return fmt.Errorf("convert last-reply-time: %v", err)
+	} else {
+		p.LastReply = lastReply
 	}
-	content, created, err := getDetail(link)
-	if err != nil {
-		return Post{}, fmt.Errorf("get post detail from %s: %v", link, err)
-	}
-	return Post{
-		Title:     scrape.Text(linkNode),
-		Link:      link,
-		Author:    scrape.Text(authorNode),
-		Reply:     reply,
-		LastReply: lastReply,
-		Content:   content,
-		Created:   created,
-	}, nil
+	return nil
 }
 
-func getDetail(url string) (content string, created time.Time, err error) {
-	resp, err := http.Get(url)
+var favorRegexp *regexp.Regexp = regexp.MustCompile(`(\d+)人\s*喜欢`)
+
+func (p *Post) GetDetail() error {
+	root, err := doubanGet(p.Link)
 	if err != nil {
-		return content, created, err
-	}
-	defer resp.Body.Close()
-	root, err := html.Parse(resp.Body)
-	if err != nil {
-		return content, created, err
+		return fmt.Errorf("get douban: %v", err)
 	}
 	if createdNode, ok := scrape.Find(root, scrape.ByClass("color-green")); !ok {
-		return content, created, fmt.Errorf("find no created time element(class=color-green) =>\n%s", node2String(root))
+		return NoneElementErr(".color-green", root)
 	} else {
-		created, err = time.Parse("2006-01-02 15:04:05 MST", scrape.Text(createdNode)+" CST")
-		if err != nil {
-			return content, created, fmt.Errorf("convert created time: %v", err)
+		if created, err := time.Parse("2006-01-02 15:04:05 MST",
+			scrape.Text(createdNode)+" CST"); err != nil {
+			return fmt.Errorf("convert created-time: %v", err)
+		} else {
+			p.Created = created
 		}
 	}
 	if contentNode, ok := scrape.Find(root, scrape.ById("link-report")); !ok {
-		return content, created, fmt.Errorf("find no content element(id=link-report) =>\n%s", node2String(root))
+		return NoneElementErr("#link-report", root)
 	} else {
-		return scrape.Text(contentNode), created, nil
+		p.Content = scrape.Text(contentNode)
 	}
-}
-
-func node2String(n *html.Node) string {
-	var web bytes.Buffer
-	html.Render(&web, n)
-	return web.String()
+	if favorNode, ok := scrape.Find(root, scrape.ByClass("fav-num")); !ok {
+		p.Favor = 0
+	} else {
+		favstr := scrape.Text(favorNode)
+		sub := favorRegexp.FindSubmatch([]byte(favstr))
+		if len(sub) < 2 {
+			return fmt.Errorf("match none digit in '%s'", favstr)
+		}
+		if favor, err := strconv.Atoi(string(sub[1])); err != nil {
+			return fmt.Errorf("convert favor-num: %v", err)
+		} else {
+			p.Favor = favor
+		}
+	}
+	return nil
 }

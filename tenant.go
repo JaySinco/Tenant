@@ -18,12 +18,12 @@ func main() {
 	flag.Parse()
 	fmt.Println("======= CONFIG ========")
 	fmt.Printf("GROUP ID     => %s\n", *GroupFlag)
-	fmt.Printf("Post LIMIT => %d\n", *maxFlag)
+	fmt.Printf("POST LIMIT   => %d\n", *maxFlag)
 	if err := compileKey(); err != nil {
 		fmt.Printf("main: %v\n", err)
 	}
 	fmt.Println("======= RESULT ========")
-	if err := (&Group{*GroupFlag, *maxFlag}).ForEach(filter); err != nil {
+	if err := (&Group{*GroupFlag, *maxFlag}).EachPost(filter); err != nil {
 		fmt.Printf("main: %v\n", err)
 	}
 	fmt.Println("======= EXIT ==========")
@@ -44,9 +44,12 @@ func compileKey() error {
 	return nil
 }
 
-func filter(t Post) error {
+func filter(t *Post) error {
 	for _, pat := range keyRegxps {
-		if pat.Match([]byte(t.Theme)) {
+		if pat.Match([]byte(t.Title)) {
+			if err := t.GetDetail(); err != nil {
+				return fmt.Errorf("get post detail: %v", err)
+			}
 			fmt.Println(t)
 		}
 	}
