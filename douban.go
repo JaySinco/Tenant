@@ -89,31 +89,21 @@ func NoneElementErr(desc string, n *html.Node) error {
 }
 
 type Post struct {
-	Title     string
-	Link      string
-	Author    string
-	Reply     int
-	LastReply time.Time
-	Created   time.Time
-	Content   string
-	Favor     int
-}
-
-func (p *Post) String() string {
-	const format string = "01-02"
-	created := strings.Repeat(" ", len(format))
-	link := strings.TrimRight(p.Link, "/")
-	link = link[strings.LastIndex(link, "/"):]
-	if !p.Created.IsZero() {
-		created = p.Created.Format(format)
-	}
-	return fmt.Sprintf("%s >> %s: %s(%s)", created, p.LastReply.Format(format),
-		strings.Replace(p.Title, "\n", "", -1), link)
+	ShortTitle string
+	Title      string
+	Link       string
+	Author     string
+	Reply      int
+	LastReply  time.Time
+	Created    time.Time // detail part begin...
+	Content    string
+	Favor      int
 }
 
 func (p *Post) getBasic(linkNode *html.Node) error {
 	p.Link = scrape.Attr(linkNode, "href")
-	p.Title = scrape.Text(linkNode)
+	p.Title = scrape.Attr(linkNode, "title")
+	p.ShortTitle = scrape.Text(linkNode)
 	authorNode := linkNode.Parent.NextSibling.NextSibling
 	p.Author = scrape.Text(authorNode)
 	replyNode := authorNode.NextSibling.NextSibling
