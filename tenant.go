@@ -51,12 +51,14 @@ func compileKey(keyStr string) ([]*regexp.Regexp, error) {
 }
 
 func filter(p *Post) error {
+	titleByte := []byte(p.Title)
 	for _, pat := range keyRegxps {
-		if pat.Match([]byte(p.Title)) {
+		if pat.Match(titleByte) {
 			if !dupCheck[p.Link] {
 				fmt.Println(renderPost(p))
 				dupCheck[p.Link] = true
 			}
+			return nil
 		}
 	}
 	return nil
