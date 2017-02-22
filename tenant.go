@@ -12,7 +12,9 @@ import (
 var groupFlag = flag.String("g", "shanghaizufang", "group name")
 var maxFlag = flag.Int("n", 25, "max num of posts")
 var keyFlag = flag.String("k",
-	"真北路;大渡河;金沙江路;娄山关路;威宁路;北新泾;淞虹路;中山公园;延安西路;虹桥路;宜山路;曹杨路;上海体育馆;桂林路;漕河泾开发区;合川路",
+	"真北路;大渡河;金沙江路;娄山关路;威宁路;北新泾;淞虹路;中山公园;延安西路;虹桥路;"+
+		"曹杨路;上海体育馆;桂林路;漕河泾开发区;合川路;伊犁路;宋园路;水城路;龙溪路;"+
+		"宜山路;上海动物园;龙柏新村;紫藤路;虹桥1号航站楼",
 	"search key(';' separated)")
 
 var keyRegxps []*regexp.Regexp
@@ -58,7 +60,7 @@ func filter(p *Post) error {
 				fmt.Println(renderPost(p))
 				dupCheck[p.Link] = true
 			}
-			return nil
+			break
 		}
 	}
 	return nil
