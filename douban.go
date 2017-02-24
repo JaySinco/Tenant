@@ -92,6 +92,7 @@ type Post struct {
 	ShortTitle string
 	Title      string
 	Link       string
+	ID         string
 	Author     string
 	Reply      int
 	LastReply  time.Time
@@ -100,8 +101,12 @@ type Post struct {
 	Favor      int
 }
 
+var nowYear int = time.Now().Year()
+
 func (p *Post) getBasic(linkNode *html.Node) error {
 	p.Link = scrape.Attr(linkNode, "href")
+	link := strings.TrimRight(p.Link, "/")
+	p.ID = link[strings.LastIndex(link, "/")+1:]
 	p.Title = scrape.Attr(linkNode, "title")
 	p.ShortTitle = scrape.Text(linkNode)
 	authorNode := linkNode.Parent.NextSibling.NextSibling
@@ -117,8 +122,14 @@ func (p *Post) getBasic(linkNode *html.Node) error {
 		p.Reply = reply
 	}
 	lastReplyNode := replyNode.NextSibling.NextSibling
+	lastReplyStr := scrape.Text(lastReplyNode)
+	if len(lastReplyStr) == 10 {
+		lastReplyStr = fmt.Sprintf("%s 00:00 CST", lastReplyStr)
+	} else {
+		lastReplyStr = fmt.Sprintf("%d-%s CST", nowYear, lastReplyStr)
+	}
 	if lastReply, err := time.Parse("2006-01-02 15:04 MST",
-		"2017-"+scrape.Text(lastReplyNode)+" CST"); err != nil {
+		lastReplyStr); err != nil {
 		return fmt.Errorf("convert last-reply-time: %v", err)
 	} else {
 		p.LastReply = lastReply
