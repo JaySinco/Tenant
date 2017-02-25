@@ -21,7 +21,8 @@ var keyFlag = flag.String("key",
 	"search key pattern")
 
 var fromFlag = flag.String("from", "zxk156@qq.com", "email sender")
-var toFlag = flag.String("to", "jaysinco@163.com", "email receivers(';' separated)")
+var toFlag = flag.String("to", "jaysinco@163.com;chenghuiasong@126.com",
+	"email receivers(';' separated)")
 var pwdFlag = flag.String("p", "", "email password")
 
 var keyRegxp *regexp.Regexp
@@ -29,6 +30,7 @@ var postsPicked = make([]*Post, 0, 10)
 var dupCheck = make(map[string]bool)
 
 func main() {
+	start := time.Now()
 	flag.Parse()
 	fmt.Fprintln(os.Stderr, "filtering posts...")
 	keyRegxp = regexp.MustCompile(*keyFlag)
@@ -82,13 +84,13 @@ func main() {
 			fmt.Fprintf(os.Stderr, "main: send email: %v\n", err)
 		}
 	}
-	fmt.Fprintln(os.Stderr, "program completed!")
+	fmt.Fprintf(os.Stderr, "program completed(%s)!\n", time.Since(start))
 }
 
 func filter(p *Post) error {
-	if keyRegxp.Match([]byte(p.Title)) && !dupCheck[p.ID] {
+	if keyRegxp.Match([]byte(p.Title)) && !dupCheck[p.Title] {
 		postsPicked = append(postsPicked, p)
-		dupCheck[p.ID] = true
+		dupCheck[p.Title] = true
 	}
 	return nil
 }
