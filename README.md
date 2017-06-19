@@ -1,2 +1,2 @@
 ## Document
-Extract topic from [Douban Group](https://www.douban.com/group/guide?guide=1) and display them on command line based on user input group name, search key string and maxium search topic number. Initial intention is to filter rent information in [shanghaizufang](https://www.douban.com/group/shanghaizufang/), but can search in other groups too.
+Extract discussion from [Douban Group](https://www.douban.com/group/guide?guide=1) and show them based on user configurable parameters: group name, search key string, maxium search discussion number and maxium workers used to search concurrently. Initial intention is to filter rent information in [shanghaizufang](https://www.douban.com/group/shanghaizufang/), but can search in other groups too.
