@@ -1,0 +1,31 @@
+﻿<style type='text/css'> 
+	a:link { text-decoration: none; color: #37a; background: transparent; } 
+	a:visited { text-decoration: none; color: #666699; background : transparent; }
+	a:hover { color: #FFFFFF; text-decoration: none; background: #37a; }
+	div.basic{ width:100%; background:#fff4e8; font-size:13px; word-wrap:break-word; word-break:break-all; }
+	table.gridtable { width:100%; font-size:13px; color:#333333; border-width: 1px; border-color: #666666; border-collapse: collapse; }
+	table.gridtable th { border-width: 1px; padding: 8px; border-style: solid; border-color: #666666; background-color: #dedede; }
+	table.gridtable td { border-width: 1px; padding: 8px; border-style: solid; border-color: #666666; background-color: #ffffff; }
+</style> 
+<h1>豆瓣小组搜索报告</h1>
+<div class='basic'>
+	<br><b>小组代码: &nbsp;</b>{{.Group}} 
+	<br><b>搜索页数: &nbsp;</b>{{.Max}}
+	<br><b>筛选数量: &nbsp;</b>{{.Discusses | len}}
+	<br><b>生成时间: &nbsp;</b>{{.Created.Format "2006-01-02 15:04:05"}}
+	<br><b>关键词: &nbsp;</b>
+	<br><b>==>&nbsp;</b>{{.Key}}
+	<br><br>
+</div>
+<table class='gridtable'>
+	<tr>
+		<th width='70%'><b>话题</b></th>	
+		<th><b>回应</b></th>
+	</tr>
+	{{range .Discusses}}
+	<tr>
+		<td><a href='{{.Link}}'>{{.Title}}</a></td>
+		<td>{{.Reply}}</td>	
+	</tr>
+	{{end}}
+</table>

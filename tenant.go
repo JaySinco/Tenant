@@ -4,9 +4,12 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"html/template"
 	"io/ioutil"
 	"log"
 	"net/http"
+	"net/smtp"
+	"os"
 	"regexp"
 	"strconv"
 	"strings"
@@ -26,42 +29,69 @@ func main() {
 	}
 
 	// search discuss following config
+	log.Printf("[INFO ] search '%s' from group '%s' in %d pages using %d workers",
+		cfg.SearchKey, cfg.GroupID, cfg.MaxPage, cfg.MaxWorker)
 	dcs, err := search(cfg.GroupID, cfg.MaxPage, cfg.MaxWorker, cfg.SearchKey)
 	if err != nil {
-		log.Printf("[ERROR] search: %v", err)
+		log.Printf("[ERROR] errors occurred during concurrent search: %v", err)
 	}
 	log.Printf("[INFO ] %d discusses found", len(dcs))
-}
 
-// corresponding to json configure file
-type Config struct {
-	GroupID   string
-	MaxPage   int
-	MaxWorker int
-	SearchKey string
-}
-
-// load configural parameter from json file
-func loadConfig(filePath string) (*Config, error) {
-	data, err := ioutil.ReadFile(filePath)
+	// generate search report
+	ftm, err := os.Open(cfg.RenderFile)
 	if err != nil {
-		return nil, fmt.Errorf("read file: %v", err)
+		log.Printf("[ERROR] open render file '%s': %v", cfg.RenderFile, err)
+		return
 	}
-	cfg := new(Config)
-	if err := json.Unmarshal(data, cfg); err != nil {
-		return nil, fmt.Errorf("unmarshal json: %v", err)
+	defer ftm.Close()
+	tmpl, err := ioutil.ReadAll(ftm)
+	if err != nil {
+		log.Printf("[ERROR] read render file '%s': %v", cfg.RenderFile, err)
+		return
 	}
-	return cfg, nil
-}
+	renderer, err := template.New("douban search report").Parse(string(tmpl))
+	if err != nil {
+		log.Printf("[ERROR] parse render file '%s': %v", cfg.RenderFile, err)
+		return
+	}
+	var report bytes.Buffer
+	if err := renderer.Execute(&report, struct {
+		Group     string
+		Max       int
+		Key       string
+		Created   time.Time
+		Discusses []*Discuss
+	}{cfg.GroupID, cfg.MaxPage, cfg.SearchKey, time.Now(), dcs}); err != nil {
+		log.Printf("[ERROR] generate report: %v", err)
+		return
+	}
+	log.Printf("[INFO ] search report generated")
 
-// discussion in douban group
-type Discuss struct {
-	Title     string
-	Link      string
-	ID        string
-	Author    string
-	Reply     int
-	LastReply time.Time
+	// send report
+	// -----by email
+	if cfg.SMTPMail.Send {
+		if err := sendMail(cfg.SMTPMail.From, cfg.SMTPMail.To, cfg.SMTPMail.Pwd,
+			"豆瓣小组搜索报告", report.String()); err != nil {
+			log.Printf("[ERROR] send report: %v", err)
+			return
+		}
+		log.Printf("[INFO ] report sended to '%s' authored by '%s'",
+			cfg.SMTPMail.To, cfg.SMTPMail.From)
+		return
+	}
+	// -----by file
+	filenm := fmt.Sprintf("Rp_%s.html", time.Now().Format("20060102_150405"))
+	frp, err := os.Create(filenm)
+	if err != nil {
+		log.Printf("[ERROR] create report file '%s': %v", filenm, err)
+		return
+	}
+	defer frp.Close()
+	if _, err := frp.WriteString(report.String()); err != nil {
+		log.Printf("[ERROR] write report into file '%s': %v", filenm, err)
+		return
+	}
+	log.Printf("[INFO ] report sended to newly created file '%s'", filenm)
 }
 
 // search takes group name & max search page number & max search worker & search key
@@ -88,8 +118,8 @@ func search(group string, pglimit int, mxworker int, srkey string) ([]*Discuss, 
 		for n := lowlimit; n <= toplimit; n++ {
 			url := fmt.Sprintf("https://www.douban.com/group/%s/discussion?start=%d",
 				group, n*25+1)
-			if dcs, err := collectDiscuss(url, filter); err != nil {
-				wrong = err
+			if dcs, err := filterDiscuss(url, filter); err != nil {
+				wrong = fmt.Errorf("__P%d__%v;", n, err)
 				break
 			} else {
 				out = append(out, dcs...)
@@ -111,40 +141,43 @@ func search(group string, pglimit int, mxworker int, srkey string) ([]*Discuss, 
 
 	// wait for workers to send back result
 	dcs := make([]*Discuss, 0)
-	erm := make(map[string]int)
+	ers := new(bytes.Buffer)
 	for n := 0; n < mxworker; n++ {
 		outcome := <-ocqueue
 		dcs = append(dcs, outcome.Out...)
 		if outcome.Wrong != nil {
-			erm[outcome.Wrong.Error()]++
+			ers.WriteString(outcome.Wrong.Error())
 		}
 	}
 
 	// return & report error
-	if len(erm) == 0 {
+	if ers.Len() == 0 {
 		return dcs, nil
 	}
-	ers := new(bytes.Buffer)
-	ern := 0
-	for s, n := range erm {
-		ern += n
-		ers.WriteString(fmt.Sprintf("%s[%d times];", s, n))
-	}
-	return dcs, fmt.Errorf("%d/%d workers error interrupt: %v",
-		ern, mxworker, ers.String())
+	return dcs, fmt.Errorf("interrupt with errors: %v", ers.String())
 }
 
-// discussGet returns douban discussions parsed from input url which has format like
+// discussion in douban group
+type Discuss struct {
+	Title     string
+	Link      string
+	ID        string
+	Author    string
+	Reply     int
+	LastReply time.Time
+}
+
+// filterDiscuss returns douban discussions parsed from input url which has format like
 // 'https://www.douban.com/group/#group_id/discussion?start=#n' and filtered by input func.
-func collectDiscuss(url string, filter func(*Discuss) bool) ([]*Discuss, error) {
+func filterDiscuss(url string, filter func(*Discuss) bool) ([]*Discuss, error) {
 	// communication check
 	resp, err := http.Get(url)
 	if err != nil {
-		return nil, fmt.Errorf("unable connect to network")
+		return nil, fmt.Errorf("http get: %v", err)
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != 200 {
-		return nil, fmt.Errorf("http status code: %s", resp.Status)
+		return nil, fmt.Errorf("abnormal response status code: %s", resp.Status)
 	}
 	root, err := html.Parse(resp.Body)
 	if err != nil {
@@ -152,7 +185,7 @@ func collectDiscuss(url string, filter func(*Discuss) bool) ([]*Discuss, error) 
 	}
 	if titleNode, ok := scrape.Find(root, scrape.ByTag(atom.Title)); ok &&
 		scrape.Text(titleNode) == "豆瓣" {
-		return nil, fmt.Errorf("response html title is '豆瓣'")
+		return nil, fmt.Errorf("incorrect html title '豆瓣'")
 	}
 
 	// filter out discuss links
@@ -205,4 +238,49 @@ func collectDiscuss(url string, filter func(*Discuss) bool) ([]*Discuss, error) 
 		}
 	}
 	return dcs, nil
+}
+
+// corresponding to json configure file
+type Config struct {
+	GroupID    string
+	MaxPage    int
+	MaxWorker  int
+	SearchKey  string
+	RenderFile string
+	SMTPMail   struct {
+		Send bool
+		From string
+		To   string
+		Pwd  string
+	}
+}
+
+// load configural parameter from json file
+func loadConfig(filePath string) (*Config, error) {
+	data, err := ioutil.ReadFile(filePath)
+	if err != nil {
+		return nil, fmt.Errorf("read file: %v", err)
+	}
+	cfg := new(Config)
+	if err := json.Unmarshal(data, cfg); err != nil {
+		return nil, fmt.Errorf("unmarshal json: %v", err)
+	}
+	return cfg, nil
+}
+
+// sendMail takes email sender's address, receivers' addresses joined by ';' into one string,
+// email client password, email subject and body to send email by SMTP protocol.
+func sendMail(from, to, pwd, sub, body string) error {
+	domain := from[strings.Index(from, "@")+1:]
+	auth := smtp.PlainAuth("", from, pwd, fmt.Sprintf("smtp.%s", domain))
+	msg := fmt.Sprintf("From: %s\r\n"+
+		"To: %s\r\n"+
+		"Content-Type: text/html; charset=UTF-8\r\n"+
+		"Subject: %s\r\n"+
+		"\r\n%s\r\n", from, to, sub, body)
+	if err := smtp.SendMail(fmt.Sprintf("smtp.%s:25", domain), auth,
+		from, strings.Split(to, ";"), []byte(msg)); err != nil {
+		return err
+	}
+	return nil
 }
