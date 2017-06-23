@@ -36,22 +36,14 @@ func main() {
 		log.Printf("[ERROR] errors occurred during concurrent search: %v", err)
 	}
 	log.Printf("[INFO ] %d discusses found", len(dcs))
+	if len(dcs) == 0 {
+		return // no result then quit, don't report
+	}
 
 	// generate search report
-	ftm, err := os.Open(cfg.RenderFile)
+	renderer, err := loadTempl(cfg.RenderFile, "report#search")
 	if err != nil {
-		log.Printf("[ERROR] open render file '%s': %v", cfg.RenderFile, err)
-		return
-	}
-	defer ftm.Close()
-	tmpl, err := ioutil.ReadAll(ftm)
-	if err != nil {
-		log.Printf("[ERROR] read render file '%s': %v", cfg.RenderFile, err)
-		return
-	}
-	renderer, err := template.New("douban search report").Parse(string(tmpl))
-	if err != nil {
-		log.Printf("[ERROR] parse render file '%s': %v", cfg.RenderFile, err)
+		log.Printf("[ERROR] load template from '%s': %v", cfg.RenderFile, err)
 		return
 	}
 	var report bytes.Buffer
@@ -67,19 +59,19 @@ func main() {
 	}
 	log.Printf("[INFO ] search report generated")
 
-	// send report
-	// -----by email
+	// send search report
+	// ----- by email
 	if cfg.SMTPMail.Send {
-		if err := sendMail(cfg.SMTPMail.From, cfg.SMTPMail.To, cfg.SMTPMail.Pwd,
-			"豆瓣小组搜索报告", report.String()); err != nil {
+		if err := sendMail(cfg.SMTPMail.From, cfg.SMTPMail.To, cfg.SMTPMail.Token,
+			"Report sent by Mr.Robot", report.String()); err != nil {
 			log.Printf("[ERROR] send report: %v", err)
 			return
 		}
-		log.Printf("[INFO ] report sended to '%s' authored by '%s'",
+		log.Printf("[INFO ] report already sent to '%s' authored by '%s'",
 			cfg.SMTPMail.To, cfg.SMTPMail.From)
-		return
+		return // only send report once either way
 	}
-	// -----by file
+	// ----- by file
 	filenm := fmt.Sprintf("Rp_%s.html", time.Now().Format("20060102_150405"))
 	frp, err := os.Create(filenm)
 	if err != nil {
@@ -91,7 +83,7 @@ func main() {
 		log.Printf("[ERROR] write report into file '%s': %v", filenm, err)
 		return
 	}
-	log.Printf("[INFO ] report sended to newly created file '%s'", filenm)
+	log.Printf("[INFO ] report already sent to newly created file '%s'", filenm)
 }
 
 // search takes group name & max search page number & max search worker & search key
@@ -248,10 +240,10 @@ type Config struct {
 	SearchKey  string
 	RenderFile string
 	SMTPMail   struct {
-		Send bool
-		From string
-		To   string
-		Pwd  string
+		Send  bool
+		From  string
+		To    string
+		Token string
 	}
 }
 
@@ -266,6 +258,24 @@ func loadConfig(filePath string) (*Config, error) {
 		return nil, fmt.Errorf("unmarshal json: %v", err)
 	}
 	return cfg, nil
+}
+
+// load template from plain text file
+func loadTempl(filePath string, name string) (*template.Template, error) {
+	ftm, err := os.Open(filePath)
+	if err != nil {
+		return nil, fmt.Errorf("open file: %v", err)
+	}
+	defer ftm.Close()
+	tmpl, err := ioutil.ReadAll(ftm)
+	if err != nil {
+		return nil, fmt.Errorf("read file: %v", err)
+	}
+	renderer, err := template.New(name).Parse(string(tmpl))
+	if err != nil {
+		return nil, fmt.Errorf("parse template: %v", err)
+	}
+	return renderer, nil
 }
 
 // sendMail takes email sender's address, receivers' addresses joined by ';' into one string,

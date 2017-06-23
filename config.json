@@ -1,12 +1,12 @@
 {
 	"GroupID": "shanghaizufang",
-	"MaxPage": 15,
+	"MaxPage": 10,
 	"MaxWorker": 2,
 	"SearchKey": "真北路|大渡河|金沙江路|娄山关路|威宁路|北新泾|淞虹路|中山公园|延安西路|虹桥路|曹杨路|上海体育馆|桂林路|漕河泾开发区|合川路|伊犁路|宋园路|水城路|龙溪路|宜山路|上海动物园|龙柏新村|紫藤路|虹桥1号航站楼",
 	"SMTPMail": {
-		"Send": false,
+		"Send": true,
 		"From": "jaysinco@qq.com",
-		"Pwd": "ygkstvxfsovkific" ,
+		"Token": "ygkstvxfsovkific" ,
 		"To": "jaysinco@163.com"	
 	},
 	"RenderFile": "render.html"
