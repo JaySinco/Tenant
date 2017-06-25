@@ -29,8 +29,8 @@ func main() {
 	}
 
 	// search discuss following config
-	log.Printf("[INFO ] search '%s' from group '%s' in %d pages using %d workers",
-		cfg.SearchKey, cfg.GroupID, cfg.MaxPage, cfg.MaxWorker)
+	log.Printf("[INFO ] search in douban group '%s' across %d pages using %d workers for '%s'",
+		cfg.GroupID, cfg.MaxPage, cfg.MaxWorker, cfg.SearchKey)
 	dcs, err := search(cfg.GroupID, cfg.MaxPage, cfg.MaxWorker, cfg.SearchKey)
 	if err != nil {
 		log.Printf("[ERROR] errors occurred during concurrent search: %v", err)
@@ -40,50 +40,60 @@ func main() {
 		return // no result then quit, don't report
 	}
 
-	// generate search report
-	renderer, err := loadTempl(cfg.RenderFile, "report#search")
-	if err != nil {
-		log.Printf("[ERROR] load template from '%s': %v", cfg.RenderFile, err)
-		return
+	// present result
+	// ----- by console
+	if cfg.Output.Mode&1 /* 001 */ != 0 {
+		for _, d := range dcs {
+			log.Printf("[INFO ] * %s", d.Title)
+		}
 	}
-	var report bytes.Buffer
-	if err := renderer.Execute(&report, struct {
-		Group     string
-		Max       int
-		Key       string
-		Created   time.Time
-		Discusses []*Discuss
-	}{cfg.GroupID, cfg.MaxPage, cfg.SearchKey, time.Now(), dcs}); err != nil {
-		log.Printf("[ERROR] generate report: %v", err)
-		return
-	}
-	log.Printf("[INFO ] search report generated")
-
-	// send search report
-	// ----- by email
-	if cfg.SMTPMail.Send {
-		if err := sendMail(cfg.SMTPMail.From, cfg.SMTPMail.To, cfg.SMTPMail.Token,
-			"Report sent by Mr.Robot", report.String()); err != nil {
-			log.Printf("[ERROR] send report: %v", err)
+	// ----- by file or email
+	if cfg.Output.Mode&2 /* 010 */ != 0 || cfg.Output.Mode&4 /* 100*/ != 0 {
+		// render template
+		renderer, err := loadTempl(cfg.Output.Template, "search#result")
+		if err != nil {
+			log.Printf("[ERROR] load template from '%s': %v", cfg.Output.Template, err)
 			return
 		}
-		log.Printf("[INFO ] report already sent to '%s' authored by '%s'",
-			cfg.SMTPMail.To, cfg.SMTPMail.From)
-		return // only send report once either way
+		var report bytes.Buffer
+		if err := renderer.Execute(&report, struct {
+			Group     string
+			Max       int
+			Key       string
+			Created   time.Time
+			Discusses []*Discuss
+		}{cfg.GroupID, cfg.MaxPage, cfg.SearchKey, time.Now(), dcs}); err != nil {
+			log.Printf("[ERROR] render template: %v", err)
+			return
+		}
+		log.Printf("[INFO ] result template rendered")
+		// ----- by file
+		if cfg.Output.Mode&2 != 0 /* 010 */ {
+			filenm := fmt.Sprintf("Rp_%s.html", time.Now().Format("20060102_150405"))
+			frp, err := os.Create(filenm)
+			if err != nil {
+				log.Printf("[ERROR] create file '%s': %v", filenm, err)
+				return
+			}
+			defer frp.Close()
+			if _, err := frp.WriteString(report.String()); err != nil {
+				log.Printf("[ERROR] write into file '%s': %v", filenm, err)
+				return
+			}
+			log.Printf("[INFO ] result written into file '%s'", filenm)
+		}
+		// ----- by mail
+		if cfg.Output.Mode&4 /* 100 */ != 0 {
+			if err := sendMail(cfg.Output.SMTPMail.From, cfg.Output.SMTPMail.To,
+				cfg.Output.SMTPMail.Token, "Report sent by Mr.Robot",
+				report.String()); err != nil {
+				log.Printf("[ERROR] send email: %v", err)
+			} else {
+				log.Printf("[INFO ] result emailed to <%s> authored by <%s>",
+					cfg.Output.SMTPMail.To, cfg.Output.SMTPMail.From)
+			}
+		}
 	}
-	// ----- by file
-	filenm := fmt.Sprintf("Rp_%s.html", time.Now().Format("20060102_150405"))
-	frp, err := os.Create(filenm)
-	if err != nil {
-		log.Printf("[ERROR] create report file '%s': %v", filenm, err)
-		return
-	}
-	defer frp.Close()
-	if _, err := frp.WriteString(report.String()); err != nil {
-		log.Printf("[ERROR] write report into file '%s': %v", filenm, err)
-		return
-	}
-	log.Printf("[INFO ] report already sent to newly created file '%s'", filenm)
 }
 
 // search takes group name & max search page number & max search worker & search key
@@ -234,16 +244,18 @@ func filterDiscuss(url string, filter func(*Discuss) bool) ([]*Discuss, error) {
 
 // corresponding to json configure file
 type Config struct {
-	GroupID    string
-	MaxPage    int
-	MaxWorker  int
-	SearchKey  string
-	RenderFile string
-	SMTPMail   struct {
-		Send  bool
-		From  string
-		To    string
-		Token string
+	GroupID   string
+	MaxPage   int
+	MaxWorker int
+	SearchKey string
+	Output    struct {
+		Mode     int
+		Template string
+		SMTPMail struct {
+			From  string
+			Token string
+			To    string
+		}
 	}
 }
 
